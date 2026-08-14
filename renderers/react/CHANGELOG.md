@@ -1,6 +1,9 @@
 ## Unreleased
 
 - (v0_9) Add `A2uiNodeSurface`, a surface renderer driven by `NodeResolver` from `@a2ui/web_core`; component implementations gain an optional node-driven `view` (see `NodeViewProps` and `useSignalValue`) ([#2077](https://github.com/a2ui-project/a2ui/pull/2077)).
+- (v0_9) Add support for universal W3C Custom Element components in `A2uiSurface` and `basicCatalog`, configurable via `A2UIProvider` with `useUniversalComponents` (default: `false`). [#2283](https://github.com/a2ui-project/a2ui/pull/2283)
+- (v0_9) Introduce `toWebComponent` adapter to convert React components into W3C Custom Elements. [#2283](https://github.com/a2ui-project/a2ui/pull/2283)
+- (v0_9) Add `A2UIProvider` and `useA2UI` context hook for global renderer configuration. [#2283](https://github.com/a2ui-project/a2ui/pull/2283)
 
 ## 0.10.2
 

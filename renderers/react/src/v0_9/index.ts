@@ -18,6 +18,7 @@ export * from './A2uiSurface';
 export * from './A2uiNodeSurface';
 export * from './adapter';
 export {useSignalValue, type NodeBuildChild, type NodeViewProps} from './node-view';
+export * from './core/A2UIProvider';
 
 // Export basic catalog components directly for 3P developers
 export * from './catalog/basic';
