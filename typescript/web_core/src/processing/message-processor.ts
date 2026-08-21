@@ -35,6 +35,7 @@ import {
 import {ProtocolVersion, VersionAdapter} from './adapters/base.js';
 import {ValidationConfig, STRICT_VALIDATION, RELAXED_VALIDATION} from '../validating/validator.js';
 import {RendererCapabilities} from '../v1_0/schema/index.js';
+import {decodeAgentToRendererMessages} from '../serialization/protobuf-converter.js';
 export type {RendererCapabilities};
 
 /**
@@ -360,6 +361,36 @@ export class MessageProcessor<T extends ComponentApi> {
    */
   processMessages(messages: unknown): void {
     if (!messages) return;
+
+    if (messages instanceof Uint8Array || messages instanceof ArrayBuffer) {
+      const decoded = decodeAgentToRendererMessages(messages);
+      for (const msg of decoded) {
+        this.processMessages(msg);
+      }
+      return;
+    }
+
+    if (
+      typeof messages === 'object' &&
+      messages !== null &&
+      'root' in (messages as Record<string, unknown>)
+    ) {
+      const root = (messages as Record<string, unknown>).root as Record<string, unknown>;
+      if (root?.file && typeof root.file === 'object') {
+        const file = root.file as Record<string, unknown>;
+        if (file.bytes) {
+          const decoded = decodeAgentToRendererMessages(file.bytes as string);
+          for (const m of decoded) {
+            this.processMessages(m);
+          }
+          return;
+        }
+      }
+      if (root?.data) {
+        this.processMessages(root.data);
+        return;
+      }
+    }
 
     if (this.validationConfig?.targetVersion) {
       this.validateTargetVersion(messages);

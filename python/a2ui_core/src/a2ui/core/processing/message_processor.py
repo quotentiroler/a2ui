@@ -27,6 +27,14 @@ from ..schema.v0_9.constants import (
 )
 
 
+from a2ui.core.proto.v1_0 import (
+    agent_to_renderer_pb2,
+    agent_to_renderer_list_pb2,
+    agent_to_renderer_list_wrapper_pb2,
+)
+from a2ui.core.serialization.converter import agent_message_to_dict
+
+
 class MessageProcessor:
     """The central logic controller for parsing protocol updates and mutating active state trees."""
 
@@ -46,18 +54,66 @@ class MessageProcessor:
             self.model.on_action.subscribe(action_handler)
 
     def process_messages(
-        self, messages: Union[List[Dict[str, Any]], Dict[str, Any]]
+        self,
+        messages: Union[
+            List[Dict[str, Any]],
+            Dict[str, Any],
+            bytes,
+            bytearray,
+            agent_to_renderer_pb2.AgentToRendererMessage,
+            agent_to_renderer_list_wrapper_pb2.AgentToRendererListWrapper,
+            agent_to_renderer_list_pb2.AgentToRendererMessageList,
+        ],
     ) -> None:
-        """Accepts a list of parsed JSON messages and executes them in order."""
-        message_list = (
-            messages.get("messages", []) if isinstance(messages, dict) else messages
-        )
+        """Accepts a list of parsed JSON messages, Protobuf instances, or binary bytes and executes them in order."""
+        if isinstance(messages, (bytes, bytearray)):
+            message_list = self._decode_protobuf_bytes(bytes(messages))
+        elif isinstance(messages, agent_to_renderer_pb2.AgentToRendererMessage):
+            message_list = [agent_message_to_dict(messages)]
+        elif isinstance(messages, agent_to_renderer_list_wrapper_pb2.AgentToRendererListWrapper):
+            message_list = [agent_message_to_dict(m) for m in messages.messages.messages]
+        elif isinstance(messages, agent_to_renderer_list_pb2.AgentToRendererMessageList):
+            message_list = [agent_message_to_dict(m) for m in messages.messages]
+        elif isinstance(messages, dict):
+            message_list = messages.get("messages", [messages]) if "messages" in messages else [messages]
+        elif isinstance(messages, list):
+            message_list = messages
+        else:
+            raise ValueError(f"Unsupported message payload type: {type(messages)}")
 
         if self.strict_mode:
             self.validator.validate_protocol_envelope(message_list)
 
         for msg in message_list:
             self._process_message(msg)
+
+    def _decode_protobuf_bytes(self, data: bytes) -> List[Dict[str, Any]]:
+        """Decodes binary Protobuf bytes into message dictionary representations."""
+        try:
+            msg = agent_to_renderer_pb2.AgentToRendererMessage()
+            msg.ParseFromString(data)
+            if msg.WhichOneof("message") is not None:
+                return [agent_message_to_dict(msg)]
+        except Exception:
+            pass
+
+        try:
+            wrapper = agent_to_renderer_list_wrapper_pb2.AgentToRendererListWrapper()
+            wrapper.ParseFromString(data)
+            if len(wrapper.messages.messages) > 0:
+                return [agent_message_to_dict(m) for m in wrapper.messages.messages]
+        except Exception:
+            pass
+
+        try:
+            msg_list = agent_to_renderer_list_pb2.AgentToRendererMessageList()
+            msg_list.ParseFromString(data)
+            if len(msg_list.messages) > 0:
+                return [agent_message_to_dict(m) for m in msg_list.messages]
+        except Exception:
+            pass
+
+        return []
 
     def get_client_capabilities(
         self, include_inline_catalogs: bool = False
