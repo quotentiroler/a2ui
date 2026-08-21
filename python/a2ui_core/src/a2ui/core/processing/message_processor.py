@@ -70,12 +70,22 @@ class MessageProcessor:
             message_list = self._decode_protobuf_bytes(bytes(messages))
         elif isinstance(messages, agent_to_renderer_pb2.AgentToRendererMessage):
             message_list = [agent_message_to_dict(messages)]
-        elif isinstance(messages, agent_to_renderer_list_wrapper_pb2.AgentToRendererListWrapper):
-            message_list = [agent_message_to_dict(m) for m in messages.messages.messages]
-        elif isinstance(messages, agent_to_renderer_list_pb2.AgentToRendererMessageList):
+        elif isinstance(
+            messages, agent_to_renderer_list_wrapper_pb2.AgentToRendererListWrapper
+        ):
+            message_list = [
+                agent_message_to_dict(m) for m in messages.messages.messages
+            ]
+        elif isinstance(
+            messages, agent_to_renderer_list_pb2.AgentToRendererMessageList
+        ):
             message_list = [agent_message_to_dict(m) for m in messages.messages]
         elif isinstance(messages, dict):
-            message_list = messages.get("messages", [messages]) if "messages" in messages else [messages]
+            message_list = (
+                messages.get("messages", [messages])
+                if "messages" in messages
+                else [messages]
+            )
         elif isinstance(messages, list):
             message_list = messages
         else:
