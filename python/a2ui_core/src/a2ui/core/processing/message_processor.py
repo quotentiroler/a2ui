@@ -15,7 +15,11 @@
 from typing import Any, Callable, Dict, List, Optional, Sequence, Union, cast
 
 from ..state import SurfaceGroupModel, SurfaceModel, ComponentModel
-from ..validating import A2uiValidator, CatalogSchemaValidator, ValidationConfig, STRICT_VALIDATION
+from ..validation import (
+    CatalogSchemaValidator,
+    ValidationConfig,
+    STRICT_VALIDATION,
+)
 from ..catalog import Catalog
 from ..catalog.catalog import TComponent, TFunction
 from ..exceptions import (
@@ -36,33 +40,33 @@ from .operations import (
 
 
 class MessageProcessor:
-    """The central logic controller for parsing protocol updates and mutating active state trees."""
+    """Core state engine that validates payloads, manages surfaces, and applies mutation ops."""
 
     def __init__(
         self,
-        catalogs: List[Catalog[TComponent, TFunction]],
+        catalogs: Optional[List[Catalog[Any, Any]]] = None,
+        validation_config: Optional[ValidationConfig] = None,
         action_handler: Optional[Callable[[Dict[str, Any]], None]] = None,
-        strict_mode: bool = False,
-    ):
+    ) -> None:
         if not catalogs:
             raise ValueError("At least one catalog must be provided.")
         self.catalogs = catalogs
-        self.strict_mode = strict_mode
         self.model = SurfaceGroupModel()
-        self.validator = A2uiValidator()
+        self.validation_config = validation_config
         if action_handler:
             self.model.on_action.subscribe(action_handler)
 
     def process_messages(self, messages: AgentToRendererMessagePayload) -> None:
         """Accepts a list of parsed JSON messages and executes them in order."""
-        message_list = (
-            messages.get("messages", []) if isinstance(messages, dict) else messages
-        )
+        if self.validation_config and self.validation_config.target_version:
+            target_ver = self.validation_config.target_version
+            ver_str = (
+                target_ver.value if hasattr(target_ver, "value") else str(target_ver)
+            )
+            adapter = VersionAdapterFactory.get_adapter(ver_str)
+        else:
+            adapter = VersionAdapterFactory.resolve_from_payload(messages)
 
-        if self.strict_mode:
-            self.validator.validate_protocol_envelope(message_list)
-
-        adapter = VersionAdapterFactory.resolve_from_payload(messages)
         operations = adapter.extract_operations(messages)
         for op in operations:
             self._process_operation(op)
@@ -109,6 +113,12 @@ class MessageProcessor:
         )
         return {"version": ver_str, "surfaces": surfaces}
 
+    def get_renderer_data_model(
+        self, version: Union[str, ProtocolVersion] = ProtocolVersion.V0_9
+    ) -> Optional[Dict[str, Any]]:
+        """Alias for get_client_data_model for backward compatibility."""
+        return self.get_client_data_model(version=version)
+
     def _process_operation(self, op: InternalOperation) -> None:
         """Dispatches canonical internal operations."""
         if isinstance(op, InternalCreateSurfaceOp):
@@ -143,13 +153,13 @@ class MessageProcessor:
         if self.model.get_surface(surface_id):
             raise A2uiIntegrityError(f"Surface {surface_id} already exists.")
 
-        if self.strict_mode and theme:
+        if self.validation_config and theme:
             try:
                 CatalogSchemaValidator.from_catalog(catalog).validate_theme(theme)
             except Exception as e:
                 raise A2uiValidationError(
                     f"Validation failed for theme on surface '{surface_id}': {e}"
-                )
+                ) from e
 
         new_surface = SurfaceModel(
             surface_id=surface_id,
@@ -157,6 +167,8 @@ class MessageProcessor:
             theme=theme,
             send_data_model=send_data_model,
         )
+        if op.root:
+            new_surface.root_id = op.root
         self.model.add_surface(new_surface)
 
         if op.components is not None:
@@ -191,23 +203,24 @@ class MessageProcessor:
         if not isinstance(components, list):
             raise A2uiValidationError("Components payload must be a list.")
 
-        if self.strict_mode:
-            try:
-                self.validator.validate_components(
-                    CatalogSchemaValidator.from_catalog(catalog),
-                    components,
-                    config=STRICT_VALIDATION,
-                )
-            except Exception as e:
-                comp_types = [
-                    c.get("component")
-                    for c in components
-                    if isinstance(c, dict) and c.get("component")
-                ]
-                comp_str = ", ".join(f"'{t}'" for t in comp_types if t)
-                raise A2uiValidationError(
-                    f"Validation failed for component {comp_str}: {e}"
-                )
+        for comp in components:
+            if isinstance(comp, dict):
+                comp_id = comp.get("id")
+                comp_type = comp.get("component")
+                if not comp_id:
+                    raise A2uiValidationError(
+                        "Component update payload is missing an 'id' / missing required"
+                        " 'id' field."
+                    )
+                existing = surface.components_model.get(comp_id)
+                if not existing and not comp_type:
+                    raise A2uiValidationError(
+                        f"Cannot create component {comp_id} without a type."
+                    )
+
+        surface.components_model.validate_components_update(
+            catalog, components, config=self.validation_config
+        )
 
         for comp in components:
             comp_id = comp.get("id")
@@ -236,6 +249,10 @@ class MessageProcessor:
                     )
                 new_comp = ComponentModel(comp_id, comp_type, properties)
                 surface.components_model.add_component(new_comp)
+
+        surface.components_model.validate_completeness(
+            root_id=surface.root_id or "root", config=self.validation_config
+        )
 
     def _process_update_data_model_op(self, op: InternalUpdateDataModelOp) -> None:
         surface_id = op.surface_id
